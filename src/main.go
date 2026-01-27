@@ -151,7 +151,7 @@ func main() {
 	h := &Handler{DB: db}
 
 	router := gin.Default()
-	router.GET("/:short_code", h.getLongUrl_service)
+	router.GET("/r/:short_code", h.getLongUrl_service)
 	router.POST("/urls", h.postLongUrl)
 	router.GET("/healthz", h.healthz)
 

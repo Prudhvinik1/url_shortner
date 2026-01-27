@@ -17,14 +17,14 @@ func setupRouterWithMockDB(t *testing.T, db *sql.DB) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{DB: db}
 	r := gin.New()
-	r.GET("/:short_code", h.getLongUrl_service)
+	r.GET("/r/:short_code", h.getLongUrl_service)
 	r.POST("/urls", h.postLongUrl)
 	r.GET("/healthz", h.healthz)
 	return r
 }
 
 func TestGetLongUrlService_NotFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestGetLongUrlService_NotFound(t *testing.T) {
 
 	router := setupRouterWithMockDB(t, db)
 
-	req := httptest.NewRequest("GET", "/miss", nil)
+	req := httptest.NewRequest("GET", "/r/miss", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -49,7 +49,7 @@ func TestGetLongUrlService_NotFound(t *testing.T) {
 }
 
 func TestGetLongUrlService_Found_Redirect(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestGetLongUrlService_Found_Redirect(t *testing.T) {
 
 	router := setupRouterWithMockDB(t, db)
 
-	req := httptest.NewRequest("GET", "/ok", nil)
+	req := httptest.NewRequest("GET", "/r/ok", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -73,6 +73,31 @@ func TestGetLongUrlService_Found_Redirect(t *testing.T) {
 	}
 	if loc := w.Header().Get("Location"); loc != "https://example.com" {
 		t.Fatalf("unexpected Location header: %s", loc)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestGetLongUrlService_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT original_url, ttl FROM urls WHERE short_code = $1`)).
+		WithArgs("err").
+		WillReturnError(sql.ErrConnDone)
+
+	router := setupRouterWithMockDB(t, db)
+
+	req := httptest.NewRequest("GET", "/r/err", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
@@ -98,6 +123,73 @@ func TestPostLongUrl_Unauthorized(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestPostLongUrl_ServerMisconfigured(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	router := setupRouterWithMockDB(t, db)
+
+	body := `{"original_url":"https://example.com","isAlias":false,"ttl":0}`
+	req := httptest.NewRequest("POST", "/urls", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestPostLongUrl_InvalidAuthHeader(t *testing.T) {
+	t.Setenv("WRITE_API_KEY", "secret")
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	router := setupRouterWithMockDB(t, db)
+
+	body := `{"original_url":"https://example.com","isAlias":false,"ttl":0}`
+	req := httptest.NewRequest("POST", "/urls", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestPostLongUrl_BadJSON(t *testing.T) {
+	t.Setenv("WRITE_API_KEY", "secret")
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	router := setupRouterWithMockDB(t, db)
+
+	body := `{"original_url":"https://example.com",`
+	req := httptest.NewRequest("POST", "/urls", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -187,14 +279,44 @@ func TestPostLongUrl_RetryOnUniqueViolation(t *testing.T) {
 	}
 }
 
-func TestHealthz_OK(t *testing.T) {
+func TestPostLongUrl_UniqueViolationAllAttempts(t *testing.T) {
+	t.Setenv("WRITE_API_KEY", "secret")
+
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
 
-	mock.ExpectPing().WillReturnError(nil)
+	for i := 0; i < 5; i++ {
+		mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO urls (short_code,original_url,is_alias,ttl,user_id) VALUES ($1,$2,$3,$4,$5)`)).
+			WithArgs(sqlmock.AnyArg(), "https://example.com", false, int64(0), int64(33)).
+			WillReturnError(&pq.Error{Code: "23505"})
+	}
+
+	router := setupRouterWithMockDB(t, db)
+
+	body := `{"original_url":"https://example.com","isAlias":false,"ttl":0}`
+	req := httptest.NewRequest("POST", "/urls", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestHealthz_OK(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
 
 	router := setupRouterWithMockDB(t, db)
 
@@ -204,6 +326,27 @@ func TestHealthz_OK(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestHealthz_DBUnavailable(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	db.Close()
+
+	router := setupRouterWithMockDB(t, db)
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
