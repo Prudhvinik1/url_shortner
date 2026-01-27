@@ -1,0 +1,23 @@
+FROM golang:1.21-alpine AS build
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o url_shortener ./src
+
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+COPY --from=build /app/url_shortener .
+
+EXPOSE 8080
+
+ENTRYPOINT ["./url_shortener"]

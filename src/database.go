@@ -60,7 +60,7 @@ func initDB() *sql.DB {
 	user := getEnv("POSTGRES_USER", "")
 	password := getEnv("POSTGRES_PASSWORD", "")
 	dbname := getEnv("POSTGRES_DB", "urls")
-	//sslmode := getEnv("POSTGRES_SSLMODE", "disable")
+	sslmode := getEnv("POSTGRES_SSLMODE", "require")
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -68,8 +68,8 @@ func initDB() *sql.DB {
 	}
 
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+		"password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode)
 
 	//sql.Open only validates if the credentials are correct
 	db, err := sql.Open("postgres", psqlInfo)
