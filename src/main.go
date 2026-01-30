@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
@@ -151,6 +152,17 @@ func main() {
 	h := &Handler{DB: db}
 
 	router := gin.Default()
+
+	//CORS middleware
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     strings.Split(os.Getenv("ALLOWED_ORIGINS"), ","),
+		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	router.GET("/r/:short_code", h.getLongUrl_service)
 	router.POST("/urls", h.postLongUrl)
 	router.GET("/healthz", h.healthz)

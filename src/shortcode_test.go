@@ -24,3 +24,4 @@ func TestGenerateShortCode_LengthAndCharset(t *testing.T) {
 	}
 }
 
+

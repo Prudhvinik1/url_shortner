@@ -8,3 +8,4 @@ CREATE TABLE IF NOT EXISTS public.urls (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+

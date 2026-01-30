@@ -2,9 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -49,7 +51,10 @@ func getLongUrl(db *sql.DB, short_code string) (string, error) {
 		return "", err
 	}
 
-	//TODO: Implement TTL invalidation
+	if ttl < time.Now().Unix() {
+		return "", errors.New("URL has expired")
+	}
+
 	return long_url, nil
 
 }
